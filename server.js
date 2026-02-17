@@ -21,6 +21,71 @@ let qrCodeData = null;
 let client = null;
 let clientReady = false;
 
+function normalizePhoneNumber(input) {
+  if (typeof input !== 'string') return '';
+  return input.replace(/\D/g, '');
+}
+
+function parseChatTarget(input) {
+  if (typeof input !== 'string') {
+    return { error: 'Nomor tujuan harus berupa string' };
+  }
+
+  const raw = input.trim();
+  if (!raw) {
+    return { error: 'Nomor tujuan tidak boleh kosong' };
+  }
+
+  if (raw.includes('@')) {
+    return { chatId: raw, normalizedNumber: raw, isDirectUser: raw.endsWith('@c.us') };
+  }
+
+  const normalizedNumber = normalizePhoneNumber(raw);
+  if (!normalizedNumber) {
+    return { error: 'Format nomor tidak valid' };
+  }
+
+  return {
+    chatId: `${normalizedNumber}@c.us`,
+    normalizedNumber,
+    isDirectUser: true
+  };
+}
+
+async function resolveChatId(input) {
+  const parsed = parseChatTarget(input);
+  if (parsed.error) return parsed;
+
+  // Hanya validasi direct user. Group/newsletter id tetap dipakai apa adanya.
+  if (!parsed.isDirectUser) return parsed;
+
+  const normalizedNumber = normalizePhoneNumber(parsed.normalizedNumber.replace('@c.us', ''));
+  if (!normalizedNumber) {
+    return { error: 'Format nomor tidak valid' };
+  }
+
+  try {
+    const numberId = await client.getNumberId(normalizedNumber);
+    const serialized =
+      typeof numberId === 'string' ? numberId : numberId?._serialized;
+
+    if (!serialized) {
+      return { error: `Nomor ${normalizedNumber} tidak terdaftar di WhatsApp` };
+    }
+
+    return {
+      chatId: serialized,
+      normalizedNumber
+    };
+  } catch (err) {
+    console.error(`Error validating number ${normalizedNumber}:`, err.message || err);
+    return {
+      chatId: `${normalizedNumber}@c.us`,
+      normalizedNumber
+    };
+  }
+}
+
 // Swagger Configuration
 const swaggerOptions = {
   definition: {
@@ -294,15 +359,21 @@ app.post('/api/send-message', async (req, res) => {
   }
 
   try {
-    // Format nomor: tambahkan @c.us jika belum ada
-    const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
+    const target = await resolveChatId(number);
+    if (target.error) {
+      return res.status(400).json({
+        success: false,
+        message: target.error
+      });
+    }
     
-    const result = await client.sendMessage(chatId, message);
+    const result = await client.sendMessage(target.chatId, message);
     
     res.json({
       success: true,
       message: 'Pesan berhasil dikirim',
-      messageId: result.id._serialized
+      messageId: result.id._serialized,
+      to: target.normalizedNumber
     });
   } catch (error) {
     console.error('Error sending message:', error);
@@ -452,15 +523,24 @@ app.post('/api/send-batch-message', async (req, res) => {
         continue;
       }
 
-      // Format nomor
-      const chatId = targetNumber.includes('@c.us') ? targetNumber : `${targetNumber}@c.us`;
-
       try {
+        const target = await resolveChatId(targetNumber);
+        if (target.error) {
+          results.push({
+            number: targetNumber,
+            success: false,
+            messageId: null,
+            error: target.error
+          });
+          failedCount++;
+          continue;
+        }
+
         // Kirim pesan
-        const result = await client.sendMessage(chatId, targetMessage);
+        const result = await client.sendMessage(target.chatId, targetMessage);
         
         results.push({
-          number: targetNumber,
+          number: target.normalizedNumber,
           success: true,
           messageId: result.id._serialized,
           error: null
@@ -632,4 +712,3 @@ app.listen(PORT, () => {
   console.log(`Swagger UI available at http://localhost:${PORT}/api-docs`);
   console.log('Initializing WhatsApp client...');
 });
-

@@ -157,6 +157,8 @@ whatsapp-api/
 - Pastikan WhatsApp sudah terhubung (cek `/api/status`)
 - Pastikan nomor sudah benar formatnya
 - Pastikan nomor sudah pernah mengirim pesan ke Anda atau ada di kontak
+- Coba kirim nomor dengan format fleksibel (mis: `+62 812-3456-7890`, API akan normalisasi otomatis)
+- Setelah update `whatsapp-web.js`, jalankan `POST /api/clear-session`, restart server, lalu scan QR ulang
 
 ### Error saat install
 - Pastikan Node.js versi 14 atau lebih baru
@@ -177,4 +179,3 @@ whatsapp-api/
 ## License
 
 ISC
-
